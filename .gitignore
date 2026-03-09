@@ -1,3 +1,6 @@
 .env
 node_modules
+dist
 .DS_Store
+.yarn/install-state.gz
+.serena/

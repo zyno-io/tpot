@@ -1,0 +1,16 @@
+{
+  "name": "@zyno-io/tpot-e2e",
+  "version": "0.3.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test dist/test/**/*.test.js"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@zyno-io/tpot-server": "workspace:*",
+    "tpot": "workspace:*"
+  }
+}

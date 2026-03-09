@@ -1,59 +1,47 @@
-### TPoT (Transport Packets over Tunnels)
-A simple (optionally authenticated) remote development/test/demo proxy over HTTP, powered by WebSockets. No additional ports required. Designed to be used with a reverse proxy for TLS.
+# TPoT (Transport Packets over Tunnels)
 
-***
+A simple, self-hosted HTTP tunneling proxy powered by WebSockets. Optionally authenticated. No additional ports required. Designed to be used with a reverse proxy for TLS.
 
-### Requirements
+Think ngrok, but open source and fully under your control.
 
-* Developed & tested against Node 12
-* An available TCP port for the server
+---
 
+## Quick Start
 
-### Installation
-You can simply clone this repository, `npm install`, and run `node index.js`. However, we also publish it as a Docker container.
+TPoT has two components: a **server** you host, and a **client** that runs on your machine.
 
-### Run as a Container
-The container is hosted on Docker Hub with the name `signal24/tpot-server`.
+### 1. Run the server
 
-Example:
 ```
-docker run -d --name tpot-server -p 3000:3000 -e DOMAIN=yourdomain.com signal24/tpot-server
+docker run -d --name tpot-server -p 3000:3000 -e DOMAIN=yourdomain.com ghcr.io/zyno-io/tpot/server
 ```
 
-### Configuration
+See [Server Documentation](packages/server/README.md) for full configuration options.
 
-These may be provided as environment variables, or specified in a `.env` file in the project root.
+### 2. Install and use the client
 
-- **DOMAIN** *(required)*
-Incoming HTTP requests will be parsed and their host will be checked against this variable. Requests will be directed to this domain for tunnel creation, and to subdomains of this domain for tunnel traffic. All other requests will result in a 404.
+```
+npm install -g tpot
+tpot -t yourdomain.com http localhost:8080
+```
 
-- **AUTH_KEY**
-If you don't want _everyone_ to be able to use your TPoT server, you can specify an authentication key. For security, it must be at least 32 characters. If provided, clients will require the same key to connect.
+See [Client Documentation](packages/client/README.md) for full usage and configuration.
 
-- **PORT**
-The port you want the server to listen on. By default, this is 3000.
+### 3. Done
 
-### Why does this require a reverse proxy for TLS?
+Traffic to `https://<assigned-subdomain>.yourdomain.com` is now tunneled to `http://localhost:8080`.
 
-Our setup has the TPoT server running as a Docker container in a Kubernetes cluster, behind an nginx ingress controller. The ingress controller already provides TLS offloading for us, so it just makes sense.
+---
 
-If demand is high enough, we may add TLS support here - but it's easy enough to set up an nginx reverse proxy if you need support sooner. (Need help? Open an issue, and we'll whip up a sample config.)
-
-### Where's the client?
-
-[Here](https://github.com/signal24/tpot-client).
-
-***
-
-### How does this work?
+## How does this work?
 
 WebSockets.
 
-The client connects to the server over a WebSocket (HTTP or HTTPS), and either requests a specific subdomain, or the server randomly assigns it one.  When the server receives a request for your assigned subdomain, it opens a new "conversation" by assigning a conversation ID for that tunnel, and sending a message to your client with the conversation ID, the conversation type (just HTTP for now; raw data in the future), and the sender IP and port. The server then just forwards all the raw data it receives over the WebSocket, prefixed with the conversation ID. The client does the same, just in reverse.
+The client connects to the server over a WebSocket, and either requests a specific subdomain or gets one randomly assigned. When the server receives a request for your subdomain, it opens a new "conversation" by assigning a conversation ID and sending a message to your client with the ID, conversation type (HTTP for now; raw data in the future), and the sender's IP and port. The server then forwards all raw data over the WebSocket, prefixed with the conversation ID. The client does the same in reverse.
 
-In the case of HTTP conversations, the client analyzes the inbound traffic so that it can rewrite the HTTP host header. This behavior is enabled by default, but can be disabled using the `--no-host-rewrite` flag.
+For HTTP conversations, the client analyzes inbound traffic to rewrite the HTTP Host header. This is enabled by default but can be disabled with `--no-host-rewrite`.
 
-### Is this secure?
+## Is this secure?
 
 That depends on your setup.
 
@@ -61,20 +49,57 @@ If you expose your server over HTTPS, then all communication between the client 
 
 As for the security from your TPoT client to your target... that's up to you.
 
-*NOTE: HTTPS target support is right around the corner.*
+## Why not ngrok, localtunnel, etc?
 
+Most importantly: it's open source, and fully under your control.
 
-### How is this any different than ngrok, localtunnel, etc?
+We ran into the upper limit of ngrok's per-minute connection limit, and didn't like that the paid plans still felt limited.
 
-Most importantly: it's open source, and fully under your control!
+localtunnel seemed decent, but it opened random ports to establish connections, which wasn't compatible with running the server as a simple deployment on our Kubernetes cluster.
 
-We accidentally ran into the upper limit of ngrok's per-minute connection limit, and didn't like that the paid plans had what still felt like low limits.
+TPoT's server needs nothing more than a single port. It can run on a dedicated cloud server or as a container in a Kubernetes deployment behind an nginx ingress controller. All traffic for both clients and remote users is routed through that single port.
 
-localtunnel seemed decent, but it opened random ports to establish connections, which wasn't compatible with trying to run the server as a simple deployment on our Kubernetes cluster.
+## Authentication
 
-For HTTP/S support (which is the only thing supported at the moment!), TPoT's server needs nothing more than a single port, which can run on its own dedicated cloud server, or as a container in a Kubernetes deployment, behind an nginx ingress controller (which is how we run it). All traffic for both the clients and the remote users is routed through the single port.
+TPoT supports **static key** or **OIDC** authentication (one or the other, not both). Quick examples:
 
+```
+# Static key
+docker run -e DOMAIN=yourdomain.com -e AUTH_KEY=your-secret-key ... zyno-io/tpot-server
+tpot -k your-secret-key -t yourdomain.com http localhost:8080
 
-### Where are the tests??
+# OIDC (client auto-discovers OIDC params from server)
+docker run -e DOMAIN=yourdomain.com -e OIDC_DISCOVERY_URL=https://login.microsoftonline.com/TENANT/v2.0 -e OIDC_CLIENT_ID=CLIENT_ID -e OIDC_AUDIENCE=CLIENT_ID ... zyno-io/tpot-server
+tpot -t yourdomain.com http localhost:8080
+```
 
-Feel free to write them :)
+See the full [Authentication Guide](docs/authentication.md) for server/client configuration, provider setup (Microsoft Entra ID, Google, Auth0), and detailed options.
+
+---
+
+## Why does this need a reverse proxy for TLS?
+
+Our setup runs the TPoT server as a Docker container in a Kubernetes cluster, behind an nginx ingress controller that handles TLS offloading. It just makes sense for us.
+
+If you need TLS and don't have a reverse proxy, it's easy enough to set up nginx in front of TPoT. Need help? Open an issue.
+
+---
+
+## Development
+
+```
+yarn install
+yarn build
+yarn test
+```
+
+This is a Yarn workspaces monorepo with two packages:
+
+| Package | Path | Purpose |
+|---------|------|---------|
+| `@zyno-io/tpot-server` | `packages/server` | Server (Docker image) |
+| `tpot` | `packages/client` | Client (npm package) |
+
+## License
+
+MIT

@@ -1,23 +1,32 @@
-const EventEmitter = require('events').EventEmitter;
+import { EventEmitter } from 'events';
 
-// const ClientHttpConnection = require('./ClientHttpConnection');
-const { TunnelError } = require('./Errors');
+import { TunnelError } from './Errors';
+import * as CONTROL_CODES from './TunnelControlCodes';
+import type { Tunnel } from './Tunnel';
+import type { ClientHttpConnection } from './ClientHttpConnection';
+import type debugFactory from 'debug';
+import type net from 'net';
 
-const CONTROL_CODES = require('./TunnelControlCodes');
+export class TunnelConversation extends EventEmitter {
+    tunnel: Tunnel;
+    id: number;
+    mode: number | null = null;
 
-class TunnelConversation extends EventEmitter {
-    constructor(tunnel, id) {
+    isTunnelConvoOpen = true;
+    isClientConnected = true;
+    hasEnded = false;
+    bytesForwardedThroughTunnel = 0;
+    bytesForwardedToClient = 0;
+
+    log: debugFactory.Debugger;
+    client!: ClientHttpConnection;
+    clientSocket!: net.Socket;
+
+    constructor(tunnel: Tunnel, id: number) {
         super();
 
         this.tunnel = tunnel;
         this.id = id;
-        this.mode = null;
-
-        this.isTunnelConvoOpen = true;
-        this.isClientConnected = true;
-        this.hasEnded = false;
-        this.bytesForwardedThroughTunnel = 0;
-        this.bytesForwardedToClient = 0;
 
         this.log = this.tunnel.log.extend('convo-' + this.id);
     }
@@ -27,10 +36,10 @@ class TunnelConversation extends EventEmitter {
      * CLIENT HANDLERS
      *****************/
 
-    handleNewConnection(clientConnection, initialData) {
-        if (this.connection)
+    handleNewConnection(clientConnection: ClientHttpConnection, initialData: Buffer): void {
+        if (this.client)
             throw new Error('connection has already been established');
-        
+
         this.client = clientConnection;
         this.clientSocket = this.client.socket;
 
@@ -39,36 +48,32 @@ class TunnelConversation extends EventEmitter {
         this.clientSocket.on('data', this.handleClientSocketDataReceived.bind(this));
         this.clientSocket.on('drain', this.handleClientSocketWriteDrained.bind(this));
 
-        // TODO: figure out how to make this work later. having a cyclic dependency issue.
-        // if (clientConnection instanceof ClientHttpConnection) {
-            this.mode = CONTROL_CODES.TYPE_HTTP;
-        // else if (...)
-        //     this.mode = CONTROL_CODES.TYPE_RAW;
-        // else
-        //     throw new Error('unhandled connection type');
+        this.mode = CONTROL_CODES.TYPE_HTTP;
 
-        const remoteAddr = this.clientSocket.remoteAddress.replace(/^.*:/, '').split('.');
-        const remotePort = this.clientSocket.remotePort;
+        const rawAddr = this.clientSocket.remoteAddress || '0.0.0.0';
+        const ipv4Part = rawAddr.replace(/^.*:/, '');
+        const remoteAddr = ipv4Part.includes('.') ? ipv4Part.split('.') : ['0', '0', '0', '0'];
+        const remotePort = this.clientSocket.remotePort || 0;
 
         const controlBuffer = Buffer.allocUnsafe(10);
         controlBuffer.writeUInt8(CONTROL_CODES.MSG_CONTROL, 0);
         controlBuffer.writeUInt8(this.mode, 1);
         controlBuffer.writeUInt16LE(this.id, 2);
-        controlBuffer.writeUInt8(remoteAddr[0], 4);
-        controlBuffer.writeUInt8(remoteAddr[1], 5);
-        controlBuffer.writeUInt8(remoteAddr[2], 6);
-        controlBuffer.writeUInt8(remoteAddr[3], 7);
+        controlBuffer.writeUInt8(parseInt(remoteAddr[0]) || 0, 4);
+        controlBuffer.writeUInt8(parseInt(remoteAddr[1]) || 0, 5);
+        controlBuffer.writeUInt8(parseInt(remoteAddr[2]) || 0, 6);
+        controlBuffer.writeUInt8(parseInt(remoteAddr[3]) || 0, 7);
         controlBuffer.writeUInt16LE(remotePort, 8);
         this.tunnel.ws.send(controlBuffer);
 
         this.forwardDataThroughTunnel(initialData);
     }
 
-    handleClientSocketDataReceived(data) {
+    handleClientSocketDataReceived(data: Buffer): void {
         this.forwardDataThroughTunnel(data);
     }
 
-    handleClientSocketWriteDrained() {
+    handleClientSocketWriteDrained(): void {
         this.sendTunnelControlMessage(CONTROL_CODES.CONVO_RESUME);
     }
 
@@ -77,28 +82,28 @@ class TunnelConversation extends EventEmitter {
      * TUNNEL HANDLERS
      *****************/
 
-    handleDataFromTunnel(data) {
-        if (data[0] == CONTROL_CODES.CONVO_DATA)
-            return this.forwardToClient(data.slice(1));
-        if (data[0] == CONTROL_CODES.CONVO_PAUSE)
+    handleDataFromTunnel(data: Buffer): void {
+        if (data[0] === CONTROL_CODES.CONVO_DATA)
+            return this.forwardToClient(data.subarray(1));
+        if (data[0] === CONTROL_CODES.CONVO_PAUSE)
             return this.invokeClientSocketMethod('pause');
-        if (data[0] == CONTROL_CODES.CONVO_RESUME)
+        if (data[0] === CONTROL_CODES.CONVO_RESUME)
             return this.invokeClientSocketMethod('resume');
-        if (data[0] == CONTROL_CODES.CONVO_CLOSED)
+        if (data[0] === CONTROL_CODES.CONVO_CLOSED)
             return this.handleUpstreamSocketClosed();
-        if (data[0] == CONTROL_CODES.CONVO_NOCONNECT)
+        if (data[0] === CONTROL_CODES.CONVO_NOCONNECT)
             return this.handleUpstreamSocketCouldNotConnect();
-        
+
         throw new TunnelError('unhandled conversation control code');
     }
-    
+
 
     /******************
      * OUTPUT FUNCTIONS
      *****************/
 
-    sendTunnelControlMessage(controlCode) {
-        if (!this.isTunnelConvoOpen) return false;
+    sendTunnelControlMessage(controlCode: number): void {
+        if (!this.isTunnelConvoOpen) return;
 
         const outBuffer = Buffer.allocUnsafe(4);
         outBuffer.writeUInt8(CONTROL_CODES.MSG_CONVO, 0);
@@ -107,21 +112,21 @@ class TunnelConversation extends EventEmitter {
         this.tunnel.ws.send(outBuffer);
     }
 
-    forwardDataThroughTunnel(data) {
-        if (!this.isTunnelConvoOpen) return false;
-        
+    forwardDataThroughTunnel(data: Buffer): void {
+        if (!this.isTunnelConvoOpen) return;
+
         const outBuffer = Buffer.allocUnsafe(4 + data.length);
         outBuffer.writeUInt8(CONTROL_CODES.MSG_CONVO, 0);
         outBuffer.writeUInt16LE(this.id, 1);
         outBuffer.writeUInt8(CONTROL_CODES.CONVO_DATA, 3);
         data.copy(outBuffer, 4);
         this.tunnel.ws.send(outBuffer);
-        
+
         this.bytesForwardedThroughTunnel += data.length;
     }
 
-    forwardToClient(data) {
-        if (!this.isClientConnected) return false;
+    forwardToClient(data: Buffer): void {
+        if (!this.isClientConnected) return;
 
         const shouldContinueWriting = this.clientSocket.write(data);
         if (!shouldContinueWriting) this.sendTunnelControlMessage(CONTROL_CODES.CONVO_PAUSE);
@@ -129,7 +134,7 @@ class TunnelConversation extends EventEmitter {
         this.bytesForwardedToClient += data.length;
     }
 
-    invokeClientSocketMethod(method) {
+    invokeClientSocketMethod(method: 'pause' | 'resume'): void {
         if (!this.isClientConnected) return;
         this.clientSocket[method]();
     }
@@ -139,25 +144,25 @@ class TunnelConversation extends EventEmitter {
      * TEARDOWN
      *****************/
 
-    handleClientSocketClosed() {
+    handleClientSocketClosed(): void {
         this.isClientConnected = false;
         this.sendTunnelControlMessage(CONTROL_CODES.CONVO_CLOSED);
         this.checkForEnd();
     }
 
-    handleClientSocketError(err) {
+    handleClientSocketError(_err: Error): void {
         this.handleClientSocketClosed();
     }
 
-    handleUpstreamSocketClosed() {
+    handleUpstreamSocketClosed(): void {
         this.isTunnelConvoOpen = false;
         this.isClientConnected && this.clientSocket.end();
         this.checkForEnd();
     }
 
-    handleUpstreamSocketCouldNotConnect() {
+    handleUpstreamSocketCouldNotConnect(): void {
         if (this.isClientConnected) {
-            if (this.mode == CONTROL_CODES.TYPE_HTTP) {
+            if (this.mode === CONTROL_CODES.TYPE_HTTP) {
                 this.client.handleHttpError({
                     statusCode: 503,
                     message: 'tunnel could not connect to upstream'
@@ -168,11 +173,11 @@ class TunnelConversation extends EventEmitter {
         }
     }
 
-    terminate() {
+    terminate(): void {
         this.isTunnelConvoOpen = false;
 
         if (this.isClientConnected) {
-            if (this.mode == CONTROL_CODES.TYPE_HTTP && this.bytesForwardedToClient == 0) {
+            if (this.mode === CONTROL_CODES.TYPE_HTTP && this.bytesForwardedToClient === 0) {
                 this.client.handleHttpError({
                     statusCode: 503,
                     message: 'tunnel disconnected suddenly'
@@ -185,7 +190,7 @@ class TunnelConversation extends EventEmitter {
         this.checkForEnd();
     }
 
-    checkForEnd() {
+    checkForEnd(): void {
         if (this.isTunnelConvoOpen) return;
         if (this.isClientConnected) return;
         if (this.hasEnded) return;
@@ -195,5 +200,3 @@ class TunnelConversation extends EventEmitter {
         this.log('transmitted %d bytes upstream, %d bytes downstream', this.bytesForwardedThroughTunnel, this.bytesForwardedToClient);
     }
 }
-
-module.exports = TunnelConversation;

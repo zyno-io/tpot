@@ -1,24 +1,25 @@
 {
-  "name": "tpot-server",
-  "version": "0.2.0",
-  "description": "TPoT (Transport Packets over Tunnels): A simple (optionally authenticated) remote development/test/demo proxy over HTTP, powered by WebSockets. No additional ports required. Designed to be used with a reverse proxy for TLS.",
-  "main": "index.js",
+  "private": true,
+  "name": "@zyno-io/tpot",
+  "description": "TPoT (Transport Packets over Tunnels): A simple (optionally authenticated) remote development/test/demo proxy over HTTP, powered by WebSockets.",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "yarn workspaces foreach -A --topological-dev run build",
+    "test": "yarn build && yarn workspaces foreach -A run test"
   },
-  "author": "Sean Ferguson <sean@sgnl24.com>",
+  "author": "Zyno Consulting <oss@zyno.io>",
   "license": "MIT",
-  "dependencies": {
-    "debug": "^4.1.1",
-    "dotenv": "^8.2.0",
-    "ws": "^7.2.3"
-  },
-  "optionalDependencies": {
-    "bufferutil": "^4.0.1",
-    "utf-8-validate": "^5.0.2"
-  },
   "repository": {
     "type": "git",
-    "url": "https://github.com/signal24/tpot-server.git"
+    "url": "https://github.com/zyno-io/tpot.git"
+  },
+  "packageManager": "yarn@4.13.0",
+  "devDependencies": {
+    "@types/debug": "^4.1.12",
+    "@types/node": "^25.4.0",
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.9.3"
   }
 }

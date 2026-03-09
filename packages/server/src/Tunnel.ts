@@ -1,30 +1,37 @@
-const logGenerator = require('debug');
+import debugFactory from 'debug';
+import WebSocket from 'ws';
 
-const Conversation = require('./TunnelConversation');
-const { TunnelError } = require('./Errors');
-
-const CONTROL_CODES = require('./TunnelControlCodes');
+import { TunnelConversation } from './TunnelConversation';
+import { TunnelError } from './Errors';
+import * as CONTROL_CODES from './TunnelControlCodes';
+import type { ClientHttpConnection } from './ClientHttpConnection';
 
 let tunnelCount = 0;
 
-class Tunnel {
-    conversations = {};
+export class Tunnel {
+    conversations: Record<number, TunnelConversation> = {};
     openConversationCount = 0;
     nextConversationId = 0;
 
-    constructor(ws, subdomain) {
+    id: number;
+    ws: WebSocket;
+    subdomain: string;
+    log: debugFactory.Debugger;
+    lastPingTs = 0;
+    checkInterval: ReturnType<typeof setTimeout>;
+
+    constructor(ws: WebSocket, subdomain: string) {
         this.id = ++tunnelCount;
         this.ws = ws;
         this.subdomain = subdomain;
 
-        this.log = logGenerator('tunnel-' + this.id);
+        this.log = debugFactory('tunnel-' + this.id);
 
         this.ws.on('error', this.handleWsError.bind(this));
         this.ws.on('close', this.handleWsClosed.bind(this));
         this.ws.on('message', this.handleWsMessage.bind(this));
         this.ws.on('ping', this.handleWsPing.bind(this));
 
-        this.lastPingTs = 0;
         this.checkInterval = setTimeout(this.verifyPingTs.bind(this), 30000);
 
         this.sendGreeting();
@@ -35,39 +42,36 @@ class Tunnel {
      * WEBSOCKET HANDLERS
      *****************/
 
-    handleWsError(err) {
+    handleWsError(err: Error): void {
         this.log('WebSocket error:', err);
     }
 
-    handleWsClosed(code, reason) {
+    handleWsClosed(code: number, reason: Buffer): void {
         clearInterval(this.checkInterval);
         Object.values(this.conversations).forEach(conversation => conversation.terminate());
         this.log('WebSocket disconnected', code, reason);
     }
 
-    handleWsPing() {
+    handleWsPing(): void {
         this.lastPingTs = Date.now();
     }
 
-    handleWsMessage(data) {
+    handleWsMessage(data: WebSocket.RawData): void {
+        const buf = data as Buffer;
         try {
-            if (data[0] == CONTROL_CODES.MSG_CONTROL)
-                return this.handleControlMessage(data.slice(1));
-            if (data[0] == CONTROL_CODES.MSG_CONVO)
-                return this.handleConversationMessage(data.slice(1));
-        }
-        
-        catch (err) {
+            if (buf[0] === CONTROL_CODES.MSG_CONTROL)
+                return this.handleControlMessage(buf.subarray(1));
+            if (buf[0] === CONTROL_CODES.MSG_CONVO)
+                return this.handleConversationMessage(buf.subarray(1));
+        } catch (err) {
             if (err instanceof TunnelError) {
                 this.log('ERR: ' + err.message);
                 return this.ws.close(4180, err.message);
-            }
-
-            else {
+            } else {
                 throw err;
             }
         }
-        
+
         this.ws.close(4180, 'unhandled message type');
     }
 
@@ -76,15 +80,15 @@ class Tunnel {
      * SETUP & PERSISTENCE
      *****************/
 
-    verifyPingTs() {
+    verifyPingTs(): void {
         if (this.lastPingTs + 30000 < Date.now()) {
             this.log('no ping received in a while. terminating.');
             this.ws.terminate();
         }
     }
 
-    sendGreeting() {
-        let greetingBuffer = Buffer.alloc(9 + this.subdomain.length);
+    sendGreeting(): void {
+        const greetingBuffer = Buffer.alloc(9 + this.subdomain.length);
         greetingBuffer.writeUInt8(CONTROL_CODES.MSG_CONTROL, 0);
         greetingBuffer.writeUInt8(CONTROL_CODES.CONTROL_GREETINGS, 1);
         greetingBuffer.write('TPoT/1 ' + this.subdomain, 2);
@@ -96,10 +100,10 @@ class Tunnel {
      * NEW CONNECTION HANDLING
      *****************/
 
-    handleNewConnection(clientConnection, initialData) {
+    handleNewConnection(clientConnection: ClientHttpConnection, initialData: Buffer): void {
         const conversationId = this.generateConversationId();
-        
-        const conversation = new Conversation(this, conversationId);
+
+        const conversation = new TunnelConversation(this, conversationId);
         this.conversations[conversationId] = conversation;
 
         this.openConversationCount++;
@@ -110,20 +114,20 @@ class Tunnel {
             delete this.conversations[conversationId];
             this.log('conversation ' + conversationId + ' ended, leaving ' + this.openConversationCount + ' open conversations');
         });
-        
+
         conversation.handleNewConnection(clientConnection, initialData);
     }
-    
-    generateConversationId() {
-        if (this.openConversationCount == 65535) {
+
+    generateConversationId(): number {
+        if (this.openConversationCount === 65535) {
             throw new TunnelError('reached maximum connections');
         }
 
-        let conversationId;
+        let conversationId: number;
         do {
             conversationId = ++this.nextConversationId;
-            
-            if (conversationId == 65536) {
+
+            if (conversationId === 65536) {
                 this.nextConversationId = conversationId = 1;
             }
         }
@@ -137,23 +141,20 @@ class Tunnel {
      * INBOUND DATA PROCESSING
      *****************/
 
-    handleControlMessage(data) {
+    handleControlMessage(_data: Buffer): void {
         // none implemented yet
         throw new TunnelError('invalid control message');
     }
 
-    handleConversationMessage(data) {
+    handleConversationMessage(data: Buffer): void {
         const conversationId = data.readUInt16LE(0);
         const conversation = this.conversations[conversationId];
-        
+
         if (!conversation) {
-            // throw new TunnelError('conversation ' + conversationId + ' does not exist');
             // just ignore these for now
             return this.log('received conversation message ' + String.fromCharCode(data[2]) + ' for non-existent conversation ' + conversationId);
         }
-        
-        conversation.handleDataFromTunnel(data.slice(2));
+
+        conversation.handleDataFromTunnel(data.subarray(2));
     }
 }
-
-module.exports = Tunnel;

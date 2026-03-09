@@ -1,0 +1,27 @@
+{
+  "name": "@zyno-io/tpot-server",
+  "version": "0.3.0",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "tsc -p tsconfig.test.json && node --test dist/test/**/*.test.js"
+  },
+  "dependencies": {
+    "debug": "^4.4.3",
+    "dotenv": "^17.3.1",
+    "jose": "^6.2.1",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@types/debug": "^4.1.12",
+    "@types/node": "^25.4.0",
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.9.3"
+  },
+  "optionalDependencies": {
+    "bufferutil": "^4.1.0",
+    "utf-8-validate": "^6.0.6"
+  }
+}
