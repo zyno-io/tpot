@@ -1,6 +1,6 @@
 {
   "name": "tpot",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "TPoT (Transport Packets over Tunnels): A simple (optionally authenticated) remote development/test/demo proxy over HTTP, powered by WebSockets. No additional ports required. Designed to be used with a reverse proxy for TLS.",
   "main": "dist/index.js",
   "bin": "./dist/index.js",

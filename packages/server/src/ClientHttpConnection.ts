@@ -106,7 +106,8 @@ export class ClientHttpConnection extends EventEmitter {
     }
 
     verifyHeaderLength(): void {
-        if (this.initialDataLen > HEADER_LIMIT)
+        const headerLength = this.requestHeadersTerminalOffset ?? this.initialDataLen;
+        if (headerLength > HEADER_LIMIT)
             throw new HttpError(413, 'Request Entity Too Large', 'headers exceeded maximum allowed length');
     }
 

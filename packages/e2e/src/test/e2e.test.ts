@@ -453,6 +453,13 @@ describe('E2E: HTTP parsing edge cases', () => {
         assert.ok(response.startsWith('HTTP/1.1 200'), `expected 200, got: ${response.substring(0, 60)}`);
     });
 
+    it('should not reject requests whose headers are small but body pushes total size over limit', async () => {
+        const body = 'X'.repeat(10000);
+        const raw = `POST / HTTP/1.1\r\nHost: ${tunnelSubdomain}.${DOMAIN}:${sPort}\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`;
+        const response = await rawRequest(sPort, raw);
+        assert.ok(!response.startsWith('HTTP/1.1 413'), `expected non-413, got: ${response.substring(0, 60)}`);
+    });
+
     it('should enforce header size limit even after request line is parsed', async () => {
         const bigHeader = 'X-Padding: ' + 'A'.repeat(8200);
         const raw = `GET / HTTP/1.1\r\nHost: ${tunnelSubdomain}.${DOMAIN}:${sPort}\r\n${bigHeader}\r\n\r\n`;
